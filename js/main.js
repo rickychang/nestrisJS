@@ -3,8 +3,17 @@ var BLOCKHEIGHT = 35;
 var LINEWIDTH = 4;
 var ROWCOUNT = 20;
 var COLCOUNT = 10;
+var ANIMATION_FRAME_RATE = 5;
 
-// I , L, J, S, Z, O, T
+var CLEAR_ANIMATION_STATES = [
+  [4, 5],
+  [3, 4, 5, 6],
+  [2, 3, 4, 5, 6, 7],
+  [1, 2, 3, 4, 5, 6, 7, 8],
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+]
+
+// I, L, J, S, Z, O, T
 var SHAPE_ROTATIONS = [
     // I
     [
@@ -111,13 +120,17 @@ var LEVEL_FRAMES_PER_DROP = {
 };
 
 var currentShape;
+var rowsToClear = [];
+var rowClearAnimationState = 0;
+var frameCount = 0;
+var clearAnimFrameCount = 1;
 
 var levelColors = [
     ['red', 'blue', 'green'],
     ['cyan', 'brown', 'yellow']
 ];
 
-var currentLevel = 5;
+var currentLevel = 6;
 
 var ctx, gameCanvas;
 
@@ -184,11 +197,13 @@ Shape.prototype.moveDown = function() {
 };
 
 Shape.prototype.dropCell = function() {
-    var newOriginY = this.originY + 1;
+  var newOriginY = this.originY + 1;
 
-    if (this.isValidPosition(this.originX, newOriginY, this.currentRotation)) {
-        this.originY = newOriginY;
-    }
+  if (this.isValidPosition(this.originX, newOriginY, this.currentRotation)) {
+    this.originY = newOriginY;
+  } else {
+    lockShape();
+  }
 };
 
 Shape.prototype.getSquares = function(originX, originY, rotation) {
@@ -203,7 +218,6 @@ Shape.prototype.getSquares = function(originX, originY, rotation) {
             if (squaresGrid[y][x]) {
                 squareCoords.push([originX + x, originY + y])
             }
-
         }
     }
     return squareCoords;
@@ -223,24 +237,91 @@ Shape.prototype.isValidPosition = function(newOriginX, newOriginY, newRotation) 
     return true;
 };
 
+function createShape() {
+  currentShape = new Shape(0, 0, Math.floor(Math.random()*3));
+}
+
+function lockShape() {
+  var rowIndices = {};
+  currentShape.getSquares().forEach(function(square) {
+    rowIndices[square[1]] = square[1];
+    board[square[0]][square[1]] = currentShape.colorIndex;
+  });
+  rows = Object.keys(rowIndices).map(function(i) {return parseInt(i)});
+  // Sort rows in ascending order for processing top-to-bottom.
+  rows = rows.sort();
+  findFullRows(rows);
+  currentShape = null;
+}
+
+function findFullRows(rows) {
+  rows.forEach(function(row) {
+    var clearRow = true;
+    for (var col = 0; col < COLCOUNT; col++) {
+      if (board[col][row] === -1) {
+        clearRow = false;
+      }
+    }
+    if (clearRow) { rowsToClear.push(row); }
+  });
+}
+
+function updateBoardAfterRowClear() {
+  rowsToClear.forEach(function(rowToClear) {
+    for (var row = rowToClear; row >= 0; row--) {
+      for (var col = 0; col < COLCOUNT; col++) {
+        var colorAbove = board[col][row - 1]
+        if (colorAbove === undefined) {
+          colorAbove = -1;
+        }
+        board[col][row] = colorAbove;
+      }
+    }
+  });
+  rowsToClear = [];
+  clearAnimFrameCount = 1;
+  rowClearAnimationState = 0;
+}
 
 function updateCanvas() {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
-    for (var x = 0; x < COLCOUNT; x++) {
-        for (var y = 0; y < ROWCOUNT; y++) {
-            var squareColor = board[x][y];
-            if (squareColor != -1) {
-                drawSquare(x, y, levelColors[currentLevel][squareColor]);
-            }
-        }
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+  for (var x = 0; x < COLCOUNT; x++) {
+    for (var y = 0; y < ROWCOUNT; y++) {
+      var squareColor = board[x][y];
+      if (squareColor != -1) {
+        drawSquare(x, y, levelColors[currentLevel % levelColors.length][squareColor]);
+      }
     }
+  }
 
-    if (currentShape) {
-        currentShape.getSquares().forEach(function(squareCoord) {
-            drawSquare(squareCoord[0], squareCoord[1], levelColors[currentLevel % levelColors.length][currentShape.colorIndex]);
-        })
+  // Draw clearing lines if a row is full.
+  if (rowsToClear.length) {
+    var animationFinished = false;
+    if (rowClearAnimationState === 4) { animationFinished = true; }
+    // Draw black squares that move out from the middle of the full rows.
+    rowsToClear.forEach(function(row) {
+      CLEAR_ANIMATION_STATES[rowClearAnimationState].forEach(function(col) {
+        drawSquare(col, row, 'black');
+      })
+    });
+    // With slight delay, move to next frame for clearing anim.
+    if (!animationFinished) {
+      if (clearAnimFrameCount % ANIMATION_FRAME_RATE === 0) { rowClearAnimationState++; }
+      clearAnimFrameCount++;
     }
+    // If the animation is finished, move the rows down.
+    else {
+      updateBoardAfterRowClear();
+    }
+  }
+
+  // Draw current shape.
+  if (currentShape) {
+    currentShape.getSquares().forEach(function(squareCoord) {
+      drawSquare(squareCoord[0], squareCoord[1], levelColors[currentLevel % levelColors.length][currentShape.colorIndex]);
+    });
+  }
 }
 
 window.onload = function() {
@@ -248,23 +329,23 @@ window.onload = function() {
         switch (event.keyCode) {
             // z
             case 90:
-                currentShape.rotateCounterClockwise();
+                if (currentShape) { currentShape.rotateCounterClockwise(); }
                 break;
             // x
             case 88:
-                currentShape.rotateClockwise();
+                if (currentShape) { currentShape.rotateClockwise(); }
                 break;
             // left arrow
             case 37:
-                currentShape.moveLeft();
+                if (currentShape) { currentShape.moveLeft(); }
                 break;
             // right arrow
             case 39:
-                currentShape.moveRight();
+                if (currentShape) { currentShape.moveRight(); }
                 break;
             // down arrow
             case 40:
-                currentShape.moveDown();
+                if (currentShape) { currentShape.moveDown(); }
                 break;
         }
     });
@@ -272,12 +353,14 @@ window.onload = function() {
 
     gameCanvas = document.getElementById('gameCanvas');
     ctx = gameCanvas.getContext('2d');
-    currentShape = new Shape(0, 0, Math.floor(Math.random()*3));
-    var frameCount = 0;
+    createShape();
     timer = setInterval(function() {
         frameCount++;
         updateCanvas();
-        if (frameCount % LEVEL_FRAMES_PER_DROP[currentLevel] == 0) {
+
+        if (!currentShape && !rowsToClear.length) { createShape(); }
+
+        if (currentShape && frameCount % LEVEL_FRAMES_PER_DROP[currentLevel] == 0) {
             currentShape.dropCell();
         }
     }, 17);
